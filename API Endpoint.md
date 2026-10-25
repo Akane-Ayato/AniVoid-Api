@@ -493,3 +493,61 @@ curl -I "https://<your-service>.onrender.com/heartbeat"
 - [ ] Debounce search input (300–500 ms) and cancel stale requests.
 - [ ] Free Render instances sleep when idle: the first request after a sleep can take ~30–60 s. Keep it awake with an UptimeRobot monitor on `/heartbeat`, and show a loading state in the UI.
 - [ ] Episodes and embed links come from the official `GET https://anikotoapi.site/series/{id}` (60 requests / IP / 120 s).
+
+---
+
+## 6. Accounts & community endpoints (new)
+
+All of these need the header **`X-AVTV: 1`** on `POST/PUT/PATCH/DELETE`, and use the `avtv_session` cookie (HttpOnly) for the signed-in user. From the browser call them through the Vercel proxy: `fetch("/api/v1/me", { credentials: "same-origin" })` (see the frontend's `assets/site.js` → `AVTV.api()`).
+Errors keep the `{ "success": false, "message": "..." }` shape. Validation errors are now `422 { "success": false, "message": "Invalid input: ...", "detail": [...] }`. `401` includes `"auth_required": true`; failed captchas include `"captcha_failed": true`.
+
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `GET /api/config` | – | `{accounts: bool, google_client_id}` |
+| `GET /api/auth/captcha` | – | `{token, image}`: `image` is an SVG data-URI; the token is single-use, valid 5 min |
+| `POST /api/auth/register` | – | `{username, password, confirm?, captcha_token, captcha_answer}` → sets cookie, returns your profile |
+| `POST /api/auth/login` | – | `{username (or email), password, captcha_token, captcha_answer}` |
+| `POST /api/auth/google` | – | `{credential}` → `{status:"ok", user}` or `{status:"need_username", ticket, email}` |
+| `POST /api/auth/google/complete` | – | `{ticket, username}` creates the profile |
+| `POST /api/auth/logout` | – | clears the cookie |
+| `GET /api/me` | ✔ | your full profile (below) |
+| `PATCH /api/me` | ✔ | any of `bio` (plain text, no links), `avatar {bg 0-11, icon, frame}`, `favorites [{id,title,poster}] (max 10)`, `privacy {show_list}` |
+| `POST /api/me/password` | ✔ | `{current, new}` (current not needed for Google-only accounts); signs out other devices |
+| `POST /api/me/username` | ✔ | `{username, password}` once per 30 days |
+| `POST /api/me/checkin` | ✔ | daily VP + streak |
+| `GET /api/me/vp` | ✔ | last 50 VP transactions |
+| `GET /api/users/{username}` | – | public profile (no email/id; `stats.list_counts` is `null` if the list is private) |
+| `GET /api/users/{username}/list?status=` | – | public list (403 when private) |
+| `GET /api/comments?anime_id=&page=&per_page=&sort=new\|top` | optional | top-level comments (`my_vote`/`mine` filled when signed in) |
+| `GET /api/comments/{id}/replies` | optional | replies, oldest first |
+| `POST /api/comments` | ✔ | `{anime_id, text (1-1000), parent_id?}`; replies are one level deep |
+| `POST /api/comments/{id}/vote` | ✔ | `{value: 1\|-1\|0}` |
+| `DELETE /api/comments/{id}` | ✔ | own comments only |
+| `GET /api/list?status=all\|watching\|completed\|on_hold\|dropped\|plan_to_watch` | ✔ | your list + counts |
+| `GET/PUT/DELETE /api/list/{anime_id}` | ✔ | read / set `{status, title, poster}` / remove |
+| `GET /api/continue` · `PUT /api/continue/{anime_id}` · `DELETE /api/continue/{anime_id}` · `DELETE /api/continue` | ✔ | continue-watching: `PUT {title, poster, episode, audio}` |
+| `POST /api/continue/merge` | ✔ | `{items:[{anime_id,title,poster,episode,audio,updated_at(ms)}]}` merges guest history, returns the merged list |
+| `POST /api/watch/complete` | ✔ | `{anime_id, episode}`: counts once per episode (stats + VP) |
+
+`GET /api/me` / public profile shape (abridged):
+
+```json
+{
+  "success": true,
+  "results": {
+    "id": "…", "username": "alice", "bio": "", "joined": "2026-10-25T06:00:00+00:00",
+    "avatar": { "bg": 3, "icon": "initial", "frame": "glow" },
+    "vp": 62, "streak": 1,
+    "rank": { "index": 0, "title": "Newcomer", "next_title": "Void Initiate", "next_at": 500, "progress": 12.4, "ladder": [ { "title": "Newcomer", "at": 0 } ] },
+    "stats": { "episodes": 1, "hours": 0.4, "minutes": 24, "comments": 2, "list_total": 3, "completed": 1,
+               "list_counts": { "watching": 1, "completed": 1, "on_hold": 0, "dropped": 0, "plan_to_watch": 1 },
+               "best_streak": 1, "days_on_site": 0 },
+    "badges": [ { "id": "first_steps", "icon": "👣", "name": "First Steps", "desc": "Create your account", "earned": true } ],
+    "favorites": [ { "id": 1234, "title": "Example", "poster": "https://…" } ],
+    "privacy": { "show_list": true },
+    "has_password": true, "google_linked": false, "email": null, "checked_in_today": true,
+    "frames": [ { "key": "sakura", "unlocked": false, "unlock_rank": "Void Initiate" } ]
+  }
+}
+```
+(`id`, `email`, `has_password`, `google_linked`, `checked_in_today`, `frames` only appear on `/api/me`.)
