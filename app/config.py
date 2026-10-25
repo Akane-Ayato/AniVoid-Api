@@ -49,6 +49,15 @@ class Settings:
     scraper_api_key = os.getenv("SCRAPER_API_KEY", "").strip()
     flaresolverr_url = os.getenv("FLARESOLVERR_URL", "").strip().rstrip("/")
 
+    # accounts (MongoDB) -------------------------------------------------
+    mongodb_uri = os.getenv("MONGODB_URI", "").strip()
+    mongodb_db = os.getenv("MONGODB_DB", "anivoid")
+    session_secret = os.getenv("SESSION_SECRET", "").strip()
+    session_days = int(os.getenv("SESSION_DAYS", "30"))
+    cookie_secure = _bool("COOKIE_SECURE", True)
+    google_client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+    proxy_secret = os.getenv("PROXY_SECRET", "").strip()   # shared with the Vercel proxy, to trust X-Client-IP
+
     # cache
     ttl_search = int(os.getenv("TTL_SEARCH", "300"))
     ttl_schedule = int(os.getenv("TTL_SCHEDULE", "600"))
