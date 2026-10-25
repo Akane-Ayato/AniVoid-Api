@@ -5,11 +5,13 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Header, Query, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from . import cache, catalog, crawler, extractors, scheduler, scraper, store, upstream
+from . import accounts, cache, catalog, crawler, extractors, scheduler, scraper, social, store, upstream, db as database
 from .config import settings
+from .errors import ApiError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("api")
@@ -33,11 +35,40 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AniVoid API", version="1.0.0", lifespan=lifespan,
               description="Own API layer on top of the official AniKoto public API.")
-app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["GET", "POST"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+                   allow_headers=["*"], allow_credentials=settings.cors_origins != ["*"])
+app.include_router(accounts.router)
+app.include_router(social.router)
 
 
 def fail(status: int, message: str) -> JSONResponse:
     return JSONResponse({"success": False, "message": message}, status_code=status)
+
+
+@app.exception_handler(ApiError)
+async def _api_error(_: Request, e: ApiError):
+    return JSONResponse({"success": False, "message": e.message, **e.extra}, status_code=e.status)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error(_: Request, e: RequestValidationError):
+    first = e.errors()[0] if e.errors() else {}
+    where = ".".join(str(x) for x in first.get("loc", []) if x != "body")
+    return JSONResponse({"success": False, "message": f"Invalid input{': ' + where if where else ''}",
+                         "detail": jsonable_errors(e.errors())}, status_code=422)
+
+
+def jsonable_errors(errors):
+    return [{"loc": list(x.get("loc", [])), "msg": x.get("msg", ""), "type": x.get("type", "")} for x in errors]
+
+
+@app.middleware("http")
+async def csrf_guard(request: Request, call_next):
+    """State-changing calls must carry a custom header (a cross-site form/img can't add it)."""
+    if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.url.path.startswith("/api/") \
+            and request.url.path != "/api/admin/refresh" and request.headers.get("x-avtv") != "1":
+        return fail(403, "Missing X-AVTV header.")
+    return await call_next(request)
 
 
 @app.exception_handler(scraper.ScrapeError)
@@ -63,6 +94,7 @@ async def root():
             "top-ten": "/api/top-ten",
             "completed": "/api/completed?page=1&per_page=20",
             "upcoming": "/api/upcoming?page=1&per_page=20",
+            "accounts": "/api/config, /api/auth/*, /api/me, /api/comments, /api/list, /api/continue, /api/users/{name}",
             "status": "/api/status",
             "heartbeat": "/heartbeat",
             "docs": "/docs",
