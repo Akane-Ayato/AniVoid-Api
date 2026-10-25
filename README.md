@@ -48,6 +48,42 @@ the newest 300 rows are pulled from the official API (max once per 10 min); sear
 from the page. `catalog.json` also powers a fallback: if the site is blocked (Cloudflare), `/api/search` and `/api/random`
 answer from the catalog and set the header `X-Data-Source: local-catalog`.
 
+## Accounts & community (profiles, comments, lists, VP)
+
+Needs a database: **MongoDB** (free Atlas M0 is enough). Without `MONGODB_URI` everything above keeps working and the account
+endpoints answer `503 Accounts are not enabled`.
+
+1. Atlas → create a free cluster → *Database Access* user → *Network Access* allow your host (`0.0.0.0/0` for Render) → copy the
+   connection string into `MONGODB_URI`.
+2. Set `SESSION_SECRET` (`python -c "import secrets;print(secrets.token_hex(32))"`). Changing it signs everybody out.
+3. Frontend on Vercel? The browser only talks to the Vercel domain (`api/v1/[...path].js` forwards to this backend), so the session cookie stays
+   first-party. Set the same random `PROXY_SECRET` here and on Vercel so the real visitor IP reaches the rate limiter.
+4. Google sign-in (optional): Google Cloud Console → *APIs & Services → Credentials → OAuth client ID → Web application*, add your site
+   origin under *Authorized JavaScript origins*, put the client id in `GOOGLE_CLIENT_ID`. The popup hides the Google button when it is empty.
+
+What it provides: register/login (username + password + server-issued captcha), Google login, profile (bio, avatar, effects, favorites,
+privacy), public profiles, comments with replies and votes, anime list (watching / completed / on-hold / dropped / plan-to-watch),
+continue-watching sync, watch stats and **Void Points (VP)**: daily check-in streaks, 6 ranks, 11 computed badges and rank-locked avatar effects.
+
+| VP source | Points | Daily cap |
+|---|---|---|
+| Welcome bonus | 50 | once |
+| Daily check-in | 10 + 2 per streak day (max 7) | once |
+| Episode watched | 5 | 100 |
+| Comment | 3 | 15 |
+| First time adding an anime to the list | 2 | 10 |
+
+Ranks: Newcomer 0 · Void Initiate 500 · Shadow Watcher 2,000 · Rift Walker 5,000 · Void Sage 10,000 · Ascended 25,000
+(`app/progress.py`, easy to retune).
+
+**Security notes.** Passwords are hashed with scrypt; the session is an HttpOnly, SameSite=Lax signed cookie (password change signs out
+other devices); every state-changing call needs the `X-AVTV: 1` header (CSRF guard); captchas are signed, expire after 5 min and are single-use;
+login/register/comment/vote endpoints are rate limited per IP/user; links are rejected in bios and comments; the frontend renders all user
+text with `textContent`/escaping. Password-only accounts have no recovery (there is no email): tell users to connect Google or keep their password safe.
+The rate limiter and captcha cache are in-process, so keep a single worker.
+
+Endpoint reference: `api_endpoints.md` (section 6).
+
 ## Run locally
 
 ```bash
@@ -96,6 +132,8 @@ app/main.py        FastAPI app + endpoints        app/crawler.py   weekly crawl 
 app/extractors.py  search/schedule/random/top-ten  app/catalog.py   slug → id map, local fallbacks
 app/scraper.py     mirror fallback + bypass        app/upstream.py  official API client + rate limiter
 app/scheduler.py   Sunday job                      app/store.py     atomic JSON files
+app/accounts.py    auth, captcha, profile          app/social.py    comments, list, continue, public profiles
+app/progress.py    VP, ranks, badges               app/security.py  scrypt, signed tokens, captcha, rate limit
 tests/             offline tests (network mocked)  deploy/          systemd + nginx
 ```
 
