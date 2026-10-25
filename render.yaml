@@ -13,5 +13,13 @@ services:
         value: UTC               # e.g. Asia/Kolkata
       - key: ADMIN_TOKEN
         generateValue: true
+      - key: MONGODB_URI
+        sync: false              # paste your Atlas connection string in the Render dashboard
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: PROXY_SECRET
+        sync: false              # same value as PROXY_SECRET on Vercel
+      - key: GOOGLE_CLIENT_ID
+        sync: false              # optional
       # DATA_DIR defaults to ./data (the JSON files you commit/upload with the repo).
       # On a paid plan you can add a persistent disk and set DATA_DIR to its mount path.
