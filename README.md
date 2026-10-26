@@ -48,22 +48,17 @@ the newest 300 rows are pulled from the official API (max once per 10 min); sear
 from the page. `catalog.json` also powers a fallback: if the site is blocked (Cloudflare), `/api/search` and `/api/random`
 answer from the catalog and set the header `X-Data-Source: local-catalog`.
 
-## Accounts & community (profiles, comments, lists, VP)
+## Accounts, profiles & community (v2)
 
-Needs a database: **MongoDB** (free Atlas M0 is enough). Without `MONGODB_URI` everything above keeps working and the account
-endpoints answer `503 Accounts are not enabled`.
+Needs **MongoDB** (free Atlas M0 is fine; uploaded pictures are stored there too, ~40 MB cap per user by default). Without `MONGODB_URI` the anime endpoints keep working and the account endpoints answer `503`.
 
-1. Atlas → create a free cluster → *Database Access* user → *Network Access* allow your host (`0.0.0.0/0` for Render) → copy the
-   connection string into `MONGODB_URI`.
-2. Set `SESSION_SECRET` (`python -c "import secrets;print(secrets.token_hex(32))"`). Changing it signs everybody out.
-3. Frontend on Vercel? The browser only talks to the Vercel domain (`api/v1/[...path].js` forwards to this backend), so the session cookie stays
-   first-party. Set the same random `PROXY_SECRET` here and on Vercel so the real visitor IP reaches the rate limiter.
-4. Google sign-in (optional): Google Cloud Console → *APIs & Services → Credentials → OAuth client ID → Web application*, add your site
-   origin under *Authorized JavaScript origins*, put the client id in `GOOGLE_CLIENT_ID`. The popup hides the Google button when it is empty.
+1. Atlas → free cluster → Database Access user → Network Access (`0.0.0.0/0` for Render) → connection string in `MONGODB_URI`.
+2. `SESSION_SECRET` (`python -c "import secrets;print(secrets.token_hex(32))"`). Changing it signs everybody out.
+3. Frontend on Vercel: the browser only talks to the Vercel domain (`api/proxy.js` forwards to this backend), so cookies stay first-party. Use the same random `PROXY_SECRET` here and on Vercel.
+4. Google sign-in (optional): OAuth *Web* client id in `GOOGLE_CLIENT_ID`, your site origin in *Authorized JavaScript origins*. **Only the client id is needed. Never commit the client secret / `client_secret_*.json` file.**
+5. `ADMIN_TOKEN` enables the moderation endpoints and `/api/admin/refresh`. `DISABLE_DOCS=true` hides `/docs` in production.
 
-What it provides: register/login (username + password + server-issued captcha), Google login, profile (bio, avatar, effects, favorites,
-privacy), public profiles, comments with replies and votes, anime list (watching / completed / on-hold / dropped / plan-to-watch),
-continue-watching sync, watch stats and **Void Points (VP)**: daily check-in streaks, 6 ranks, 11 computed badges and rank-locked avatar effects.
+Features: display names (shown on comments and profiles, separate from the @handle), unlimited-style picture galleries (30 avatars / 12 banners, pick the main one, WebP re-encoded), banners with 8 free presets, **Void Shop** with 101 effects (37 avatar frames, 28 name effects, 20 animated banner overlays, 16 card styles), 34 titles and 5 sticker packs (40 original animated stickers), 8 animated reactions, VP economy (daily check-in streaks, 6 ranks, 15 computed badges), watch lists, continue-watching sync, public profiles, reports and admin moderation.
 
 | VP source | Points | Daily cap |
 |---|---|---|
@@ -73,14 +68,10 @@ continue-watching sync, watch stats and **Void Points (VP)**: daily check-in str
 | Comment | 3 | 15 |
 | First time adding an anime to the list | 2 | 10 |
 
-Ranks: Newcomer 0 · Void Initiate 500 · Shadow Watcher 2,000 · Rift Walker 5,000 · Void Sage 10,000 · Ascended 25,000
-(`app/progress.py`, easy to retune).
+Prices: common 120 · uncommon 320 · rare 700 (rank 1+) · epic 1500 (rank 2+) · legendary 3200 VP (rank 3+); sticker packs 600-1000. All tunable in `app/effects.py` / `app/progress.py`. After editing effects run `python tools/gen_effects.py ../AniVoidTV/assets/effects.css` to regenerate the frontend CSS.
 
-**Security notes.** Passwords are hashed with scrypt; the session is an HttpOnly, SameSite=Lax signed cookie (password change signs out
-other devices); every state-changing call needs the `X-AVTV: 1` header (CSRF guard); captchas are signed, expire after 5 min and are single-use;
-login/register/comment/vote endpoints are rate limited per IP/user; links are rejected in bios and comments; the frontend renders all user
-text with `textContent`/escaping. Password-only accounts have no recovery (there is no email): tell users to connect Google or keep their password safe.
-The rate limiter and captcha cache are in-process, so keep a single worker.
+**Security.** scrypt password hashes; DB-backed sessions (HttpOnly, SameSite=Lax, `__Host-` cookie name when secure) that you can list and revoke, "sign out everywhere", password change signs out other devices; 15-minute lockout after 8 wrong passwords; server-issued single-use captchas; per-IP/user rate limits on login, register, upload, comments, reactions, shop, reports; CSRF header on every write; request-size limits; uploads are fully decoded and re-encoded with Pillow (metadata stripped, decompression-bomb guard, content served with `nosniff` + sandbox CSP); links rejected in bios/names/comments; constant-time token checks; security headers on every response; the proxy exposes only an allow-list of API areas (never `/api/admin`). The rate limiter and captcha cache are in-process: keep one worker.
+Password-only accounts have no email recovery; users can connect Google or keep their password safe.
 
 Endpoint reference: `api_endpoints.md` (section 6).
 
@@ -134,6 +125,9 @@ app/scraper.py     mirror fallback + bypass        app/upstream.py  official API
 app/scheduler.py   Sunday job                      app/store.py     atomic JSON files
 app/accounts.py    auth, captcha, profile          app/social.py    comments, list, continue, public profiles
 app/progress.py    VP, ranks, badges               app/security.py  scrypt, signed tokens, captcha, rate limit
+app/media.py       picture upload/serve            app/shop.py      Void Shop (buy/equip)
+app/effects.py     101 effects, titles, stickers   app/inventory.py who may use what
+app/admin.py       reports + moderation            tools/gen_effects.py  builds the frontend effects.css
 tests/             offline tests (network mocked)  deploy/          systemd + nginx
 ```
 
