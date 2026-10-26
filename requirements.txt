@@ -6,3 +6,4 @@ lxml>=5.2
 apscheduler>=3.10,<4.0
 python-dotenv>=1.0
 pymongo>=4.8,<5.0
+Pillow>=10.3
