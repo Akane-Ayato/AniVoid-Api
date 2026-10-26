@@ -496,58 +496,83 @@ curl -I "https://<your-service>.onrender.com/heartbeat"
 
 ---
 
-## 6. Accounts & community endpoints (new)
+## 6. Accounts, profiles & community (v2)
 
-All of these need the header **`X-AVTV: 1`** on `POST/PUT/PATCH/DELETE`, and use the `avtv_session` cookie (HttpOnly) for the signed-in user. From the browser call them through the Vercel proxy: `fetch("/api/v1/me", { credentials: "same-origin" })` (see the frontend's `assets/site.js` → `AVTV.api()`).
-Errors keep the `{ "success": false, "message": "..." }` shape. Validation errors are now `422 { "success": false, "message": "Invalid input: ...", "detail": [...] }`. `401` includes `"auth_required": true`; failed captchas include `"captcha_failed": true`.
+All of these need the header **`X-AVTV: 1`** on `POST/PUT/PATCH/DELETE` and use the HttpOnly session cookie (`__Host-avtv_session`). From the browser call them through the Vercel proxy: `AVTV.api("/me")` in `assets/site.js` → `/api/v1/me`.
+Errors keep `{ "success": false, "message": "..." }`. Validation errors: `422 { "success": false, "message": "Invalid input: ...", "detail": [...] }`. `401` carries `"auth_required": true`; failed captchas carry `"captcha_failed": true`. Every response has `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` and (API paths) a locked-down CSP.
 
+### Auth & sessions
 | Endpoint | Auth | Purpose |
 |---|---|---|
-| `GET /api/config` | – | `{accounts: bool, google_client_id}` |
-| `GET /api/auth/captcha` | – | `{token, image}`: `image` is an SVG data-URI; the token is single-use, valid 5 min |
-| `POST /api/auth/register` | – | `{username, password, confirm?, captcha_token, captcha_answer}` → sets cookie, returns your profile |
-| `POST /api/auth/login` | – | `{username (or email), password, captcha_token, captcha_answer}` |
-| `POST /api/auth/google` | – | `{credential}` → `{status:"ok", user}` or `{status:"need_username", ticket, email}` |
-| `POST /api/auth/google/complete` | – | `{ticket, username}` creates the profile |
-| `POST /api/auth/logout` | – | clears the cookie |
-| `GET /api/me` | ✔ | your full profile (below) |
-| `PATCH /api/me` | ✔ | any of `bio` (plain text, no links), `avatar {bg 0-11, icon, frame}`, `favorites [{id,title,poster}] (max 10)`, `privacy {show_list}` |
-| `POST /api/me/password` | ✔ | `{current, new}` (current not needed for Google-only accounts); signs out other devices |
-| `POST /api/me/username` | ✔ | `{username, password}` once per 30 days |
-| `POST /api/me/checkin` | ✔ | daily VP + streak |
-| `GET /api/me/vp` | ✔ | last 50 VP transactions |
-| `GET /api/users/{username}` | – | public profile (no email/id; `stats.list_counts` is `null` if the list is private) |
-| `GET /api/users/{username}/list?status=` | – | public list (403 when private) |
-| `GET /api/comments?anime_id=&page=&per_page=&sort=new\|top` | optional | top-level comments (`my_vote`/`mine` filled when signed in) |
-| `GET /api/comments/{id}/replies` | optional | replies, oldest first |
-| `POST /api/comments` | ✔ | `{anime_id, text (1-1000), parent_id?}`; replies are one level deep |
-| `POST /api/comments/{id}/vote` | ✔ | `{value: 1\|-1\|0}` |
-| `DELETE /api/comments/{id}` | ✔ | own comments only |
-| `GET /api/list?status=all\|watching\|completed\|on_hold\|dropped\|plan_to_watch` | ✔ | your list + counts |
-| `GET/PUT/DELETE /api/list/{anime_id}` | ✔ | read / set `{status, title, poster}` / remove |
-| `GET /api/continue` · `PUT /api/continue/{anime_id}` · `DELETE /api/continue/{anime_id}` · `DELETE /api/continue` | ✔ | continue-watching: `PUT {title, poster, episode, audio}` |
-| `POST /api/continue/merge` | ✔ | `{items:[{anime_id,title,poster,episode,audio,updated_at(ms)}]}` merges guest history, returns the merged list |
-| `POST /api/watch/complete` | ✔ | `{anime_id, episode}`: counts once per episode (stats + VP) |
+| `GET /api/config` | – | `{accounts, google_client_id}` |
+| `GET /api/auth/captcha` | – | `{token, image}` (SVG data-URI, single-use, 5 min) |
+| `POST /api/auth/register` | – | `{username, password, confirm?, captcha_token, captcha_answer}` |
+| `POST /api/auth/login` | – | `{username or email, password, captcha_token, captcha_answer}`; 8 wrong passwords lock that account for 15 min |
+| `POST /api/auth/google` · `/api/auth/google/complete` | – | Google ID-token login (`{credential}` → `ok` or `need_username` + `ticket`) |
+| `POST /api/auth/logout` · `POST /api/auth/logout-all` | – / ✔ | end this session / every session |
+| `GET /api/me/sessions` · `DELETE /api/me/sessions/{id}` | ✔ | list devices (browser, OS, masked IP, last seen) / revoke one |
 
-`GET /api/me` / public profile shape (abridged):
+### Profile
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/me` | full private profile (shape below) |
+| `PATCH /api/me` | any of `display_name` (2-24 chars, empty = use username), `bio` (plain text, no links), `avatar {bg 0-11, icon}`, `banner {preset: "p1".."p8"}`, `accent`, `favorites[]` (max 10), `privacy {show_list}` |
+| `POST /api/me/password` · `POST /api/me/username` | `{current,new}` (signs out other devices) · `{username,password}` once per 30 days |
+| `POST /api/me/checkin` · `GET /api/me/vp` | daily VP + streak · last 50 VP transactions (shop purchases are negative) |
+| `GET /api/users/{username}` · `/list?status=` | public profile (no email/id; `stats.list_counts` is `null` if the list is private) |
 
+`name` is what people see (display name or username); `username` is the unique @handle used for login and links.
+
+### Pictures & banners
+Raw bytes in the body, `Content-Type: application/octet-stream` (the site crops/resizes in the browser first). Server validates, re-encodes to WebP (avatar 384×384, banner 1500×500), strips metadata.
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/me/pictures?kind=avatar\|banner` | upload → `{id, kind, main, bytes}`; the first one of each kind becomes main. Limits: 30 avatars, 12 banners, 2.5 MB per upload, 40 MB total (env-tunable) |
+| `GET /api/me/pictures` | `{avatars:[{id,main}], banners:[…], limits}` |
+| `POST /api/me/pictures/{id}/main` · `DELETE /api/me/pictures/{id}` | set main / delete (main falls back to the newest remaining) |
+| `GET /api/media/{id}` | public image, `Cache-Control: public, max-age=31536000, immutable` |
+
+### Void Shop (cosmetics, 100+ effects)
+`GET /api/shop` → `{vp, rank, rank_names, items[], equipped, stickers, reactions, title_colors}`. Item: `{id, kind, name, rarity, price, min_rank, owned, rank_ok, free, unlock_rank}`.
+Kinds: `frame` (37 avatar effects), `name` (28 name effects), `banner` (20 animated banner overlays), `card` (16 comment/profile card styles), `title` (34), `pack` (5 sticker packs). Rarity sets the price (120 / 320 / 700 / 1500 / 3200 VP) and the minimum rank for rare+. Price-0 items unlock automatically at their rank.
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/shop/buy` | `{item}` → atomic purchase; `402` not enough VP, `403` rank too low, `409` already yours |
+| `POST /api/shop/equip` | `{slot: frame\|name\|banner\|card\|title, item: id\|null}` |
+| `POST /api/shop/title-color` | `{color: 0-19\|null}` |
+
+The frontend turns an id like `frame.spin_aurora` into the CSS class `fx-frame-spin_aurora` (`assets/effects.css`, generated by `tools/gen_effects.py`).
+
+### Comments, reactions, stickers
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/comments?anime_id=&page=&sort=new\|top` · `GET /api/comments/{id}/replies` | public; `my_reaction`/`mine` filled when signed in |
+| `POST /api/comments` | `{anime_id, text (0-1000), sticker?: "pack:id", parent_id?}`: needs text or a sticker; premium packs must be owned (`403`) |
+| `POST /api/comments/{id}/react` | `{key: like\|love\|haha\|wow\|sad\|angry\|fire\|clap\|null}`, one reaction per user (switching replaces) |
+| `DELETE /api/comments/{id}` | own comments |
+| `POST /api/report` | `{type: comment\|media\|user, target, reason}` |
+
+Comment shape: `{id, anime_id, parent_id, text, sticker, created_at, user:{username, name, avatar:{bg,icon,pic}, fx:{frame,name,card,banner,title:{id,name,rarity,color}}, rank}, reactions:{love:2}, my_reaction, reply_count, mine}`.
+Sticker packs: `blobs`, `words` (free), `spirits` 600 VP, `sparks` 800 VP, `critters` 1000 VP, 8 stickers each (`app/effects.py` ⇄ `assets/stickers.js`).
+
+### Lists, continue watching, watch stats
+Unchanged from v1: `/api/list…`, `/api/continue…`, `/api/continue/merge`, `POST /api/watch/complete`.
+
+### Moderation (token, not cookies)
+Header `X-Admin-Token: <ADMIN_TOKEN>`: `GET /api/admin/reports`, `DELETE /api/admin/comments/{id}`, `DELETE /api/admin/media/{id}`, `POST /api/admin/users/{username}/ban?unban=false`. Not reachable through the Vercel proxy by design.
+
+### `GET /api/me` (abridged)
 ```json
-{
-  "success": true,
-  "results": {
-    "id": "…", "username": "alice", "bio": "", "joined": "2026-10-25T06:00:00+00:00",
-    "avatar": { "bg": 3, "icon": "initial", "frame": "glow" },
-    "vp": 62, "streak": 1,
-    "rank": { "index": 0, "title": "Newcomer", "next_title": "Void Initiate", "next_at": 500, "progress": 12.4, "ladder": [ { "title": "Newcomer", "at": 0 } ] },
-    "stats": { "episodes": 1, "hours": 0.4, "minutes": 24, "comments": 2, "list_total": 3, "completed": 1,
-               "list_counts": { "watching": 1, "completed": 1, "on_hold": 0, "dropped": 0, "plan_to_watch": 1 },
-               "best_streak": 1, "days_on_site": 0 },
-    "badges": [ { "id": "first_steps", "icon": "👣", "name": "First Steps", "desc": "Create your account", "earned": true } ],
-    "favorites": [ { "id": 1234, "title": "Example", "poster": "https://…" } ],
-    "privacy": { "show_list": true },
-    "has_password": true, "google_linked": false, "email": null, "checked_in_today": true,
-    "frames": [ { "key": "sakura", "unlocked": false, "unlock_rank": "Void Initiate" } ]
-  }
-}
+{ "success": true, "results": {
+  "id": "…", "username": "alice", "name": "Alice in Wonderland", "display_name": "Alice in Wonderland", "bio": "", "joined": "…",
+  "avatar": { "bg": 3, "icon": "fox", "pic": "66ab…" }, "banner": { "pic": null, "preset": "p4" }, "accent": 0,
+  "fx": { "frame": "frame.spin_aurora", "name": null, "card": null, "banner": "banner.stars_aqua", "title": { "id": "title.wanderer", "name": "Wanderer", "rarity": "common", "color": 3 } },
+  "equipped": { "frame": "frame.spin_aurora", "title": "title.wanderer", "title_color": 3 }, "owned": ["frame.spin_aurora"], "packs": ["blobs", "words"],
+  "vp": 62, "streak": 1, "rank": { "index": 0, "title": "Newcomer", "next_title": "Void Initiate", "next_at": 500, "progress": 12.4, "ladder": [] },
+  "stats": { "episodes": 1, "hours": 0.4, "comments": 2, "list_total": 3, "list_counts": { "watching": 1, "completed": 1, "on_hold": 0, "dropped": 0, "plan_to_watch": 1 }, "pics": 1, "owned": 1 },
+  "badges": [ { "id": "first_steps", "icon": "footprints", "name": "First Steps", "desc": "Create your account", "earned": true } ],
+  "favorites": [], "privacy": { "show_list": true }, "pictures": ["66ab…"],
+  "has_password": true, "google_linked": false, "email": null, "checked_in_today": true
+} }
 ```
-(`id`, `email`, `has_password`, `google_linked`, `checked_in_today`, `frames` only appear on `/api/me`.)
+Badge/avatar `icon` values are icon **keys** (drawn by the frontend as vector icons), never emoji.
