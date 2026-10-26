@@ -93,12 +93,25 @@ def test_profile_update_rules(api):
     ok = api.patch("/api/me", json={"bio": "anime fan", "favorites": [{"id": 1, "title": "A", "poster": "p"}] * 3 + [{"id": "x"}]}, headers=H)
     assert ok.status_code == 200 and len(ok.json()["results"]["favorites"]) == 1       # de-duped, junk dropped
     assert api.patch("/api/me", json={"bio": "visit www.spam.com"}, headers=H).status_code == 400
-    assert api.patch("/api/me", json={"avatar": {"frame": "rainbow"}}, headers=H).status_code == 403   # locked by rank
-    assert api.patch("/api/me", json={"avatar": {"frame": "glow", "icon": "🦊", "bg": 3}}, headers=H).status_code == 200
-    assert api.patch("/api/me", json={"avatar": {"icon": "💩"}}, headers=H).status_code == 400
+    assert api.patch("/api/me", json={"avatar": {"icon": "fox", "bg": 3}}, headers=H).status_code == 200
+    assert api.patch("/api/me", json={"avatar": {"icon": "\U0001F4A9"}}, headers=H).status_code == 400      # emoji icons are gone
+    assert api.patch("/api/me", json={"banner": {"preset": "p4"}}, headers=H).json()["results"]["banner"] == {"pic": None, "preset": "p4"}
+    assert api.patch("/api/me", json={"banner": {"preset": "nope"}}, headers=H).status_code == 400
     r = api.post("/api/me/username", json={"username": "alice2", "password": "Passw0rd!x"}, headers=H)
     assert r.status_code == 200 and r.json()["results"]["username"] == "alice2"
     assert api.post("/api/me/username", json={"username": "alice3", "password": "Passw0rd!x"}, headers=H).status_code == 429
+
+
+def test_display_name_rules(api):
+    signup(api, "alice")
+    other = TestClient(app)
+    signup(other, "bobby")
+    ok = api.patch("/api/me", json={"display_name": "Alice  in  Wonderland"}, headers=H).json()["results"]
+    assert ok["name"] == "Alice in Wonderland" and ok["username"] == "alice"                 # spaces collapsed, handle unchanged
+    for bad in ["a", "x" * 25, "bad<name>", "see www.spam.com", "bobby", "Admin", "\u200b\u200b"]:
+        assert api.patch("/api/me", json={"display_name": bad}, headers=H).status_code in (400, 409), bad
+    assert api.patch("/api/me", json={"display_name": "Zoë ✨".replace("✨", "")}, headers=H).status_code == 200     # unicode letters are fine
+    assert api.patch("/api/me", json={"display_name": ""}, headers=H).json()["results"]["name"] == "alice"           # clear -> back to username
 
 
 def test_checkin_and_streak(api):
@@ -109,28 +122,36 @@ def test_checkin_and_streak(api):
     assert again["already"] is True and again["granted"] == 0
 
 
-def test_comments_flow(api):
+def test_comments_reactions_and_stickers(api):
     signup(api, "alice")
     assert api.get("/api/comments?anime_id=7").json()["results"]["data"] == []
     c = api.post("/api/comments", json={"anime_id": 7, "text": "great show"}, headers=H).json()["results"]
-    assert c["mine"] and c["vp_gained"] == 3
+    assert c["mine"] and c["vp_gained"] == 3 and c["user"]["name"] == "alice"
     r = api.post("/api/comments", json={"anime_id": 7, "text": "agreed", "parent_id": c["id"]}, headers=H).json()["results"]
     assert r["parent_id"] == c["id"]
     assert api.post("/api/comments", json={"anime_id": 7, "text": "see http://x.com"}, headers=H).status_code == 400
+    assert api.post("/api/comments", json={"anime_id": 7, "text": ""}, headers=H).status_code == 400
     listing = api.get("/api/comments?anime_id=7").json()["results"]
     assert listing["data"][0]["reply_count"] == 1
     assert api.get(f"/api/comments/{c['id']}/replies").json()["results"]["data"][0]["text"] == "agreed"
-    v = api.post(f"/api/comments/{c['id']}/vote", json={"value": 1}, headers=H).json()["results"]
-    assert v["likes"] == 1
-    v = api.post(f"/api/comments/{c['id']}/vote", json={"value": -1}, headers=H).json()["results"]
-    assert (v["likes"], v["dislikes"]) == (0, 1)
-    # another user cannot delete it, and guests cannot comment
+    v = api.post(f"/api/comments/{c['id']}/react", json={"key": "love"}, headers=H).json()["results"]
+    assert v == {"reactions": {"love": 1}, "my_reaction": "love"}
+    v = api.post(f"/api/comments/{c['id']}/react", json={"key": "fire"}, headers=H).json()["results"]
+    assert v["reactions"] == {"fire": 1}                                                  # switching replaces, not adds
+    assert api.post(f"/api/comments/{c['id']}/react", json={"key": "\U0001F4A9"}, headers=H).status_code == 400
+    assert api.get("/api/comments?anime_id=7").json()["results"]["data"][0]["my_reaction"] == "fire"
+    assert api.post(f"/api/comments/{c['id']}/react", json={"key": None}, headers=H).json()["results"]["reactions"] == {}
+    # stickers: free packs work, paid packs need buying, unknown ones are rejected
+    security.limiter._hits.clear()                      # comment rate limit (6/min) is tested elsewhere
+    s1 = api.post("/api/comments", json={"anime_id": 7, "text": "", "sticker": "blobs:happy"}, headers=H)
+    assert s1.status_code == 200 and s1.json()["results"]["sticker"] == "blobs:happy"
+    assert api.post("/api/comments", json={"anime_id": 7, "text": "", "sticker": "spirits:boo"}, headers=H).status_code == 403
+    assert api.post("/api/comments", json={"anime_id": 7, "text": "", "sticker": "blobs:nope"}, headers=H).status_code == 400
     other = TestClient(app)
     assert other.post("/api/comments", json={"anime_id": 7, "text": "hi"}, headers=H).status_code == 401
     signup(other, "mallory")
     assert other.delete(f"/api/comments/{c['id']}", headers=H).status_code == 403
     assert api.delete(f"/api/comments/{c['id']}", headers=H).json()["results"]["removed"] == 2
-    assert api.get("/api/comments?anime_id=7").json()["results"]["data"] == []
 
 
 def test_list_and_public_profile(api):
@@ -176,6 +197,7 @@ def test_watch_complete_counts_once_and_unlocks_badges(api):
     me = api.get("/api/me").json()["results"]
     assert me["stats"]["episodes"] == 1 and me["stats"]["hours"] == 0.4
     assert {b["id"] for b in me["badges"] if b["earned"]} == {"first_steps", "first_episode"}
+    assert all(not any(ord(ch) > 0x2000 for ch in b["icon"]) for b in me["badges"])      # badge icons are keys, not emoji
 
 
 def test_daily_vp_cap():
