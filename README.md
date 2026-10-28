@@ -58,7 +58,7 @@ Needs **MongoDB** (free Atlas M0 is fine; uploaded pictures are stored there too
 4. Google sign-in (optional): OAuth *Web* client id in `GOOGLE_CLIENT_ID`, your site origin in *Authorized JavaScript origins*. **Only the client id is needed. Never commit the client secret / `client_secret_*.json` file.**
 5. `ADMIN_TOKEN` enables the moderation endpoints and `/api/admin/refresh`. `DISABLE_DOCS=true` hides `/docs` in production.
 
-Features: display names (shown on comments and profiles, separate from the @handle), unlimited-style picture galleries (30 avatars / 12 banners, pick the main one, WebP re-encoded), banners with 8 free presets, **Void Shop** with 101 effects (37 avatar frames, 28 name effects, 20 animated banner overlays, 16 card styles), 34 titles and 5 sticker packs (40 original animated stickers), 8 animated reactions, VP economy (daily check-in streaks, 6 ranks, 15 computed badges), watch lists, continue-watching sync, public profiles, reports and admin moderation.
+Features: display names (shown on comments and profiles, separate from the @handle), unlimited-style picture galleries (30 avatars / 12 banners, pick the main one, WebP re-encoded), banners with 8 free presets, **Void Shop** with 106 illustrated avatar decorations (wreaths, flower crowns, flames, crystals, orbiting objects, halos, ears and horns, crowns, wings, magic seals, auras, accessories, floating particles, HUD frames), 31 animated banner scenes, 28 name effects, 16 card styles, 34 titles and 5 sticker packs (40 original animated stickers), 8 animated reactions, VP economy (daily check-in streaks, 6 ranks, 15 computed badges), watch lists, continue-watching sync, public profiles, reports and admin moderation.
 
 | VP source | Points | Daily cap |
 |---|---|---|
@@ -68,7 +68,7 @@ Features: display names (shown on comments and profiles, separate from the @hand
 | Comment | 3 | 15 |
 | First time adding an anime to the list | 2 | 10 |
 
-Prices: common 120 · uncommon 320 · rare 700 (rank 1+) · epic 1500 (rank 2+) · legendary 3200 VP (rank 3+); sticker packs 600-1000. All tunable in `app/effects.py` / `app/progress.py`. After editing effects run `python tools/gen_effects.py ../AniVoidTV/assets/effects.css` to regenerate the frontend CSS.
+Prices: common 120 · uncommon 320 · rare 700 (rank 1+) · epic 1500 (rank 2+) · legendary 3200 VP (rank 3+); sticker packs 600-1000. All tunable in `app/effects.py` / `app/progress.py`. After editing effects run `python tools/gen_effects.py ../AniVoidTV/assets/effects.css ../AniVoidTV/assets/fx-recipes.js` to regenerate the frontend CSS.
 
 **Security.** scrypt password hashes; DB-backed sessions (HttpOnly, SameSite=Lax, `__Host-` cookie name when secure) that you can list and revoke, "sign out everywhere", password change signs out other devices; 15-minute lockout after 8 wrong passwords; server-issued single-use captchas; per-IP/user rate limits on login, register, upload, comments, reactions, shop, reports; CSRF header on every write; request-size limits; uploads are fully decoded and re-encoded with Pillow (metadata stripped, decompression-bomb guard, content served with `nosniff` + sandbox CSP); links rejected in bios/names/comments; constant-time token checks; security headers on every response; the proxy exposes only an allow-list of API areas (never `/api/admin`). The rate limiter and captcha cache are in-process: keep one worker.
 Password-only accounts have no email recovery; users can connect Google or keep their password safe.
