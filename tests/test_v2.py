@@ -36,9 +36,20 @@ def png(w=500, h=300, color=(200, 40, 90), fmt="PNG"):
     return b.getvalue()
 
 
+def test_every_recipe_family_is_known_to_the_frontend_generator():
+    import json, pathlib, subprocess, sys, tempfile
+    d = tempfile.mkdtemp()
+    out = subprocess.run([sys.executable, "tools/gen_effects.py", f"{d}/e.css", f"{d}/r.js"], capture_output=True, text=True, cwd=pathlib.Path(__file__).resolve().parent.parent)
+    assert out.returncode == 0, out.stderr
+    recipes = json.loads(open(f"{d}/r.js").read().split("AVTV.FX_RECIPES = ")[1].rstrip().rstrip(";"))
+    assert {r["fam"] for k, r in recipes.items() if k.startswith("frame.")} == {"wreath", "flowers", "flame", "crystal", "orbit", "halo", "ears", "crown", "wings", "magic", "aura", "cap", "part", "tech"}
+    assert {r["fam"] for k, r in recipes.items() if k.startswith("banner.")} <= {"b_fall", "b_scene", "b_stars", "b_fire", "b_rain", "b_fog", "b_lantern", "b_crane", "b_dust"}
+
+
 def test_catalog_has_100_plus_effects_and_no_emoji():
     kinds = [i["kind"] for i in effects.ITEMS.values()]
-    assert sum(kinds.count(k) for k in ("frame", "name", "banner", "card")) >= 100
+    assert kinds.count("frame") >= 100 and kinds.count("banner") >= 30        # illustrated decorations + animated banner scenes
+    assert sum(kinds.count(k) for k in ("frame", "name", "banner", "card")) >= 170
     assert len({i["id"] for i in effects.ITEMS.values()}) == len(effects.ITEMS)
     blob = repr(effects.ITEMS) + repr(effects.AVATAR_GLYPHS) + repr(effects.STICKERS) + repr(effects.REACTIONS)
     assert not any(ord(ch) > 0x2000 for ch in blob), "catalog must not contain emoji"
@@ -100,25 +111,25 @@ def test_picture_limits_and_auth(api, monkeypatch):
 def test_shop_buy_equip_and_ownership(api):
     signup(api)                                        # starts with 50 VP (welcome bonus)
     shop = api.get("/api/shop").json()["results"]
-    assert len(shop["items"]) >= 140 and shop["vp"] == 50
-    assert api.post("/api/shop/buy", json={"item": "frame.spin_aurora"}, headers=H).status_code == 402        # 120 VP needed
-    assert api.post("/api/shop/equip", json={"slot": "frame", "item": "frame.spin_aurora"}, headers=H).status_code == 403   # not owned
-    assert api.post("/api/shop/equip", json={"slot": "frame", "item": "frame.pulse_aqua"}, headers=H).status_code == 200      # free starter
+    assert len(shop["items"]) >= 200 and shop["vp"] == 50
+    assert api.post("/api/shop/buy", json={"item": "frame.clover_ring"}, headers=H).status_code == 402        # 120 VP needed
+    assert api.post("/api/shop/equip", json={"slot": "frame", "item": "frame.clover_ring"}, headers=H).status_code == 403   # not owned
+    assert api.post("/api/shop/equip", json={"slot": "frame", "item": "frame.sprout"}, headers=H).status_code == 200      # free starter
     assert api.post("/api/shop/buy", json={"item": "nope"}, headers=H).status_code == 404
     assert api.post("/api/shop/buy", json={"item": "name.glitch_aqua"}, headers=H).status_code == 403          # epic: rank-gated first
     db = database.get_db()
     db.users.update_one({"username_lower": "alice"}, {"$inc": {"vp": 400}})                                    # cheat VP for the test
-    r = api.post("/api/shop/buy", json={"item": "frame.spin_aurora"}, headers=H).json()["results"]
-    assert r == {"vp": 330, "item": "frame.spin_aurora"}
-    assert api.post("/api/shop/buy", json={"item": "frame.spin_aurora"}, headers=H).status_code == 409
-    assert api.post("/api/shop/equip", json={"slot": "name", "item": "frame.spin_aurora"}, headers=H).status_code == 400   # wrong slot
-    eq = api.post("/api/shop/equip", json={"slot": "frame", "item": "frame.spin_aurora"}, headers=H).json()["results"]["equipped"]
-    assert eq["frame"] == "frame.spin_aurora"
+    r = api.post("/api/shop/buy", json={"item": "frame.clover_ring"}, headers=H).json()["results"]
+    assert r == {"vp": 330, "item": "frame.clover_ring"}
+    assert api.post("/api/shop/buy", json={"item": "frame.clover_ring"}, headers=H).status_code == 409
+    assert api.post("/api/shop/equip", json={"slot": "name", "item": "frame.clover_ring"}, headers=H).status_code == 400   # wrong slot
+    eq = api.post("/api/shop/equip", json={"slot": "frame", "item": "frame.clover_ring"}, headers=H).json()["results"]["equipped"]
+    assert eq["frame"] == "frame.clover_ring"
     assert api.post("/api/shop/title-color", json={"color": 3}, headers=H).status_code == 200
     api.post("/api/shop/buy", json={"item": "title.wanderer"}, headers=H)
     api.post("/api/shop/equip", json={"slot": "title", "item": "title.wanderer"}, headers=H)
     pub = TestClient(app).get("/api/users/alice").json()["results"]
-    assert pub["fx"]["frame"] == "frame.spin_aurora" and pub["fx"]["title"] == {"id": "title.wanderer", "name": "Wanderer", "rarity": "common", "color": 3}
+    assert pub["fx"]["frame"] == "frame.clover_ring" and pub["fx"]["title"] == {"id": "title.wanderer", "name": "Wanderer", "rarity": "common", "color": 3}
     assert "owned" not in pub and "equipped" not in pub
     assert api.post("/api/shop/equip", json={"slot": "frame", "item": None}, headers=H).json()["results"]["equipped"].get("frame") is None
     api.post("/api/shop/buy", json={"item": "pack.spirits"}, headers=H)       # 600 VP: too expensive now
@@ -128,8 +139,8 @@ def test_shop_buy_equip_and_ownership(api):
 def test_shop_purchase_is_atomic_for_vp(api):
     signup(api)
     database.get_db().users.update_one({"username_lower": "alice"}, {"$set": {"vp": 130}})
-    assert api.post("/api/shop/buy", json={"item": "frame.spin_mint"}, headers=H).status_code == 200     # 120 VP
-    assert api.post("/api/shop/buy", json={"item": "frame.spin_mono"}, headers=H).status_code == 402
+    assert api.post("/api/shop/buy", json={"item": "frame.bamboo_loop"}, headers=H).status_code == 200     # 120 VP
+    assert api.post("/api/shop/buy", json={"item": "frame.clover_ring"}, headers=H).status_code == 402
     assert api.get("/api/me").json()["results"]["vp"] == 10                                              # never negative
 
 
@@ -137,7 +148,7 @@ def test_legacy_frame_names_migrate(api):
     me = signup(api)
     database.get_db().users.update_one({"username_lower": "alice"}, {"$set": {"avatar": {"bg": 1, "icon": "\U0001F98A", "frame": "glow"}}})
     r = api.get("/api/me").json()["results"]
-    assert r["equipped"]["frame"] == "frame.pulse_aqua" and r["avatar"]["icon"] == "initial"
+    assert r["equipped"]["frame"] == "frame.sprout" and r["avatar"]["icon"] == "initial"
 
 
 def test_sessions_list_revoke_and_logout_all(api):
